@@ -1,0 +1,131 @@
+[tool.poetry]
+name = "barcode-detection"
+version = "0.1.0"
+description = "MLOps barcode and QR code detection system using YOLO deep learning models"
+authors = ["seito <seito@example.com>"]
+readme = "README.md"
+packages = [{include = "barcode_detection"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+torch = "^2.0.0"
+torchvision = "^0.15.0"
+pytorch-lightning = "^2.0.0"
+ultralytics = "^8.0.0"
+hydra-core = "^1.3.2"
+mlflow = "^2.5.0"
+dvc = "^3.0.0"
+fire = "^0.5.0"
+fastapi = "^0.100.0"
+uvicorn = "^0.22.0"
+opencv-python = "^4.8.0"
+Pillow = "^10.0.0"
+numpy = "^1.24.0"
+pydantic = "^2.0.0"
+albumentations = "^1.3.0"
+scikit-learn = "^1.3.0"
+scipy = "^1.11.0"
+pathlib2 = "^2.3.7"
+omegaconf = "^2.3.0"
+tensorboard = "^2.13.0"
+matplotlib = "^3.7.0"
+seaborn = "^0.12.0"
+onnx = "^1.14.0"
+onnxruntime = "^1.15.0"
+tensorrt = {version = "^8.6.0", optional = true}
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.7.0"
+isort = "^5.12.0"
+flake8 = "^6.0.0"
+pytest = "^7.4.0"
+pytest-cov = "^4.1.0"
+pre-commit = "^3.3.0"
+mypy = "^1.5.0"
+jupyter = "^1.0.0"
+notebook = "^7.0.0"
+bandit = "^1.7.5"
+safety = "^2.3.0"
+
+[tool.poetry.extras]
+tensorrt = ["tensorrt"]
+
+[tool.poetry.scripts]
+barcode-detection = "barcode_detection.commands:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503", "E501"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "docs/source/conf.py",
+    "old",
+    "build",
+    "dist",
+    ".venv",
+    ".mypy_cache",
+    ".pytest_cache"
+]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=barcode_detection --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+source = ["barcode_detection"]
+omit = ["tests/*", "*/venv/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:"
+]
