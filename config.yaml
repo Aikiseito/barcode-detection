@@ -1,0 +1,92 @@
+# Main Hydra configuration file for barcode detection project
+
+# Hydra configuration
+defaults:
+  - _self_
+  - data: default.yaml
+  - model: yolov8.yaml
+  - training: default.yaml
+  - inference: default.yaml
+  - override hydra/job_logging: colorlog
+  - override hydra/hydra_logging: colorlog
+
+# Hydra directory configuration
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.architecture}
+  sweep:
+    dir: outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.architecture}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: True
+    config:
+      override_dirname:
+        exclude_keys:
+          - hydra
+          - model.path
+          - data.path
+          - mlflow
+          - wandb
+
+# Experiment tracking
+mlflow:
+  enabled: true
+  experiment_name: barcode_detection
+  tracking_uri: null  # Set to null to use local mlruns directory
+  log_model: true
+  registered_model_name: barcode_detector
+  tags:
+    model_type: ${model.architecture}
+    data_version: ${data.version}
+    user: ${oc.env:USER,unknown}
+
+# Weights & Biases integration
+wandb:
+  enabled: false
+  project: barcode_detection
+  entity: null  # Set to your W&B username or team name
+  tags:
+    - barcode
+    - yolo
+    - object_detection
+
+# Random seed for reproducibility
+seed: 42
+
+# Environment settings
+env:
+  cuda_visible_devices: null  # Set to specific devices or null for all
+  num_workers: 4  # Number of workers for data loading
+  pin_memory: true  # Pin memory for data loading
+
+# Project paths (relative to the project root)
+paths:
+  data_dir: data
+  output_dir: outputs
+  log_dir: logs
+  model_dir: models
+
+# Debugging mode (enables additional logging and visualizations)
+debug: false
+
+# Platform-specific options
+platform:
+  accelerator: auto  # auto, cpu, gpu, tpu
+  precision: 32  # 32, 16, bf16
+  compile: false  # Enable torch.compile() for faster training
+
+# Barcode detection specific settings
+barcode:
+  classes:
+    - EAN13
+    - CODE128
+    - QR
+    - DataMatrix
+    - PDF417
+    - UPC_A
+    - UPC_E
+    - EAN8
+    - ITF
+    - AZTEC
+  confidence_threshold: 0.25  # Default confidence threshold for predictions
+  iou_threshold: 0.45  # Default IoU threshold for NMS
