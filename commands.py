@@ -1,316 +1,349 @@
-"""Main commands entry point for barcode detection project"""
+"""Исправленный основной файл команд для проекта детекции штрих-кодов"""
 
 import os
+import sys
 import logging
 from pathlib import Path
 from typing import Optional
 
 import fire
-import hydra
-from omegaconf import DictConfig, OmegaConf
-import torch
-import dvc.api
 
-from barcode_detection.training.trainer import train_model
-from barcode_detection.inference.predictor import BarcodePredictor
-from barcode_detection.utils.logging import setup_logging
-from barcode_detection.utils.helpers import ensure_directories, download_data
+# Настройка базового логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-
-def setup_project_environment(config: DictConfig) -> None:
-    """Set up project environment and directories"""
-    # Set up logging
-    setup_logging(config.get('log_level', 'INFO'))
+def setup_imports():
+    """Настройка импортов с обработкой ошибок"""
+    # Добавляем текущую директорию в путь
+    current_dir = Path(__file__).parent
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
     
-    # Create necessary directories
-    ensure_directories([
-        config.get('output_dir', 'outputs'),
-        config.get('plots_dir', 'plots'),
-        config.get('logs_dir', 'logs'),
-        config.get('data_dir', 'data')
-    ])
-    
-    # Set device
-    if config.get('device', 'auto') == 'auto':
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        logging.info(f"Auto-detected device: {device}")
-    else:
-        device = config.device
-        logging.info(f"Using specified device: {device}")
-    
-    # Set environment variables
-    os.environ['TORCH_DEVICE'] = device
-
-
-def pull_dvc_data() -> None:
-    """Pull data using DVC"""
     try:
-        logging.info("Pulling data with DVC...")
-        dvc.api.pull()
-        logging.info("DVC data pulled successfully")
+        # Пытаемся импортировать все необходимые модули
+        global train_model, BarcodePredictor, setup_logging, ensure_directories
+        global YOLOLightning, BarcodeDataModule
+        
+        from barcode_detection.training.trainer import train_model
+        from barcode_detection.inference.predictor import BarcodePredictor
+        from barcode_detection.utils.logging import setup_logging
+        from barcode_detection.utils.helpers import ensure_directories
+        from barcode_detection.models.yolo_lightning import YOLOLightning
+        from barcode_detection.data.data_module import BarcodeDataModule
+        
+        logger.info("Все модули успешно импортированы")
+        return True
+        
+    except ImportError as e:
+        logger.error(f"Ошибка импорта: {e}")
+        logger.error("Проверьте структуру проекта и убедитесь что все файлы на месте")
+        return False
+
+def train(
+    config_file: str = "config.yaml",
+    data_dir: str = "data",
+    output_dir: str = "outputs",
+    epochs: int = 50,
+    batch_size: int = 16,
+    learning_rate: float = 0.001,
+    model_name: str = "yolov8n.pt",
+    num_classes: int = 5
+):
+    """
+    Обучение модели детекции штрих-кодов
+    
+    Args:
+        config_file: Путь к файлу конфигурации
+        data_dir: Директория с данными
+        output_dir: Директория для сохранения результатов
+        epochs: Количество эпох обучения
+        batch_size: Размер батча
+        learning_rate: Скорость обучения
+        model_name: Имя модели YOLO
+        num_classes: Количество классов
+    """
+    
+    if not setup_imports():
+        return
+    
+    logger.info("Начинаем обучение модели...")
+    
+    # Создание необходимых директорий
+    ensure_directories([output_dir, "logs", "plots"])
+    
+    # Настройка логирования
+    setup_logging(level="INFO", log_dir="logs")
+    
+    # Конфигурация для обучения
+    data_config = {
+        'data_dir': data_dir,
+        'train_path': 'train',
+        'val_path': 'val', 
+        'test_path': 'test',
+        'image_size': 640,
+        'batch_size': batch_size
+    }
+    
+    model_config = {
+        'name': model_name,
+        'num_classes': num_classes
+    }
+    
+    training_config = {
+        'epochs': epochs,
+        'learning_rate': learning_rate,
+        'batch_size': batch_size,
+        'num_workers': 4,
+        'mixed_precision': True,
+        'early_stopping': True,
+        'patience': 10
+    }
+    
+    mlflow_config = {
+        'tracking_uri': 'http://127.0.0.1:8080',
+        'experiment_name': 'barcode_detection'
+    }
+    
+    try:
+        # Запуск обучения
+        model, results = train_model(
+            data_config=data_config,
+            model_config=model_config,
+            training_config=training_config,
+            mlflow_config=mlflow_config,
+            output_dir=output_dir
+        )
+        
+        logger.info("Обучение завершено успешно!")
+        logger.info(f"Результаты: {results}")
+        
     except Exception as e:
-        logging.error(f"Failed to pull DVC data: {e}")
-        logging.info("You may need to manually download the data")
+        logger.error(f"Ошибка при обучении: {e}")
+        raise
 
+def infer(
+    input_path: str,
+    output_path: str,
+    model_path: str = "outputs/best.pt",
+    confidence_threshold: float = 0.5,
+    iou_threshold: float = 0.45
+):
+    """
+    Запуск инференса на изображениях
+    
+    Args:
+        input_path: Путь к входному изображению или директории
+        output_path: Путь для сохранения результатов
+        model_path: Путь к обученной модели
+        confidence_threshold: Порог уверенности
+        iou_threshold: Порог IoU для NMS
+    """
+    
+    if not setup_imports():
+        return
+        
+    logger.info(f"Запуск инференса для: {input_path}")
+    
+    # Конфигурация для инференса
+    config = {
+        'confidence_threshold': confidence_threshold,
+        'iou_threshold': iou_threshold,
+        'max_detections': 100,
+        'input_size': 640
+    }
+    
+    try:
+        # Инициализация предиктора
+        predictor = BarcodePredictor(
+            model_path=model_path,
+            config=config,
+            device="auto"
+        )
+        
+        input_path = Path(input_path)
+        output_path = Path(output_path)
+        
+        if input_path.is_file():
+            # Одно изображение
+            results = predictor.predict_image(input_path)
+            predictor.save_results(results, output_path)
+            logger.info(f"Результаты сохранены в: {output_path}")
+            
+        elif input_path.is_dir():
+            # Batch инференс
+            results = predictor.predict_batch(input_path)
+            predictor.save_batch_results(results, output_path)
+            logger.info(f"Результаты batch инференса сохранены в: {output_path}")
+            
+        else:
+            raise ValueError(f"Путь не существует: {input_path}")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при инференсе: {e}")
+        raise
 
-@hydra.main(version_base=None, config_path="configs", config_name="config")
-def train(cfg: DictConfig) -> None:
-    """Train the barcode detection model."""
-    logging.info("Starting training...")
-    logging.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
+def evaluate(
+    model_path: str = "outputs/best.pt",
+    data_path: str = "data/test",
+    output_file: str = "evaluation_results.json"
+):
+    """
+    Оценка качества модели на тестовых данных
     
-    # Set up environment
-    setup_project_environment(cfg)
+    Args:
+        model_path: Путь к модели
+        data_path: Путь к тестовым данным
+        output_file: Файл для сохранения результатов оценки
+    """
     
-    # Pull DVC data if needed
-    if cfg.data.get('data_source') == 'dvc' or cfg.data.get('pull_dvc', True):
-        pull_dvc_data()
+    if not setup_imports():
+        return
+        
+    logger.info("Запуск оценки модели...")
     
-    # Train model
-    model, results = train_model(
-        data_config=OmegaConf.to_container(cfg.data, resolve=True),
-        model_config=OmegaConf.to_container(cfg.model, resolve=True),
-        training_config=OmegaConf.to_container(cfg.training, resolve=True),
-        mlflow_config=OmegaConf.to_container(cfg.mlflow, resolve=True),
-        output_dir=cfg.get('output_dir', 'outputs'),
-        experiment_name=cfg.get('experiment_name', 'barcode_detection'),
-        seed=cfg.get('seed', 42)
-    )
+    config = {
+        'confidence_threshold': 0.5,
+        'iou_threshold': 0.45,
+        'max_detections': 100,
+        'input_size': 640
+    }
     
-    logging.info("Training completed successfully!")
-    logging.info(f"Best model path: {results.get('best_model_path')}")
-    logging.info(f"Best score: {results.get('best_score')}")
+    try:
+        # Инициализация предиктора
+        predictor = BarcodePredictor(
+            model_path=model_path,
+            config=config,
+            device="auto"
+        )
+        
+        # Оценка
+        metrics = predictor.evaluate(data_path)
+        
+        # Сохранение результатов
+        import json
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+            
+        logger.info("Результаты оценки:")
+        for metric_name, metric_value in metrics.items():
+            logger.info(f"  {metric_name}: {metric_value:.4f}")
+            
+        logger.info(f"Результаты сохранены в: {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при оценке: {e}")
+        raise
 
-
-@hydra.main(version_base=None, config_path="configs", config_name="config")
-def infer(cfg: DictConfig, input_path: str, output_path: str, model_path: Optional[str] = None) -> None:
-    """Run inference on images."""
-    logging.info("Starting inference...")
+def serve(
+    model_path: str = "outputs/best.pt",
+    host: str = "0.0.0.0",
+    port: int = 8080
+):
+    """
+    Запуск FastAPI сервера для инференса
     
-    # Set up environment
-    setup_project_environment(cfg)
+    Args:
+        model_path: Путь к модели
+        host: Хост сервера
+        port: Порт сервера
+    """
     
-    # Use provided model path or default from config
-    if model_path is None:
-        model_path = cfg.inference.get('model_path', 'outputs/best.pt')
+    logger.info(f"Запуск inference сервера на {host}:{port}")
     
-    # Initialize predictor
-    predictor = BarcodePredictor(
-        model_path=model_path,
-        config=OmegaConf.to_container(cfg.inference, resolve=True),
-        device=cfg.get('device', 'auto')
-    )
-    
-    # Run inference
-    input_path = Path(input_path)
-    output_path = Path(output_path)
-    
-    if input_path.is_file():
-        # Single image inference
-        results = predictor.predict_image(input_path)
-        predictor.save_results(results, output_path)
-        logging.info(f"Inference results saved to {output_path}")
-    elif input_path.is_dir():
-        # Batch inference
-        results = predictor.predict_batch(input_path)
-        predictor.save_batch_results(results, output_path)
-        logging.info(f"Batch inference results saved to {output_path}")
-    else:
-        raise ValueError(f"Input path does not exist: {input_path}")
-
-
-@hydra.main(version_base=None, config_path="configs", config_name="config")
-def evaluate(cfg: DictConfig, model_path: Optional[str] = None, data_split: str = "test") -> None:
-    """Evaluate model on test data"""
-    logging.info("Starting evaluation...")
-    
-    # Set up environment
-    setup_project_environment(cfg)
-    
-    # Use provided model path or default from config
-    if model_path is None:
-        model_path = cfg.inference.get('model_path', 'outputs/best.pt')
-    
-    # Initialize predictor
-    predictor = BarcodePredictor(
-        model_path=model_path,
-        config=OmegaConf.to_container(cfg.inference, resolve=True),
-        device=cfg.get('device', 'auto')
-    )
-    
-    # Run evaluation
-    data_path = Path(cfg.data_dir) / data_split
-    metrics = predictor.evaluate(data_path)
-    
-    logging.info("Evaluation results:")
-    for metric_name, metric_value in metrics.items():
-        logging.info(f"{metric_name}: {metric_value:.4f}")
-
-
-def convert_to_onnx(model_path: str, output_path: str, input_size: int = 640) -> None:
-    """Convert PyTorch model to ONNX format"""
-    import torch
-    from barcode_detection.models.yolo_lightning import YOLOLightning
-    
-    logging.info(f"Converting model {model_path} to ONNX format...")
-    
-    # Load model
-    model = YOLOLightning.load_from_checkpoint(model_path)
-    model.eval()
-    
-    # Create dummy input
-    dummy_input = torch.randn(1, 3, input_size, input_size)
-    
-    # Export to ONNX
-    torch.onnx.export(
-        model.model.model,
-        dummy_input,
-        output_path,
-        export_params=True,
-        opset_version=11,
-        do_constant_folding=True,
-        input_names=['input'],
-        output_names=['output'],
-        dynamic_axes={
-            'input': {0: 'batch_size'},
-            'output': {0: 'batch_size'}
+    try:
+        # Импорт server модуля
+        from server import start_server
+        
+        config = {
+            'confidence_threshold': 0.5,
+            'iou_threshold': 0.45,
+            'max_detections': 100,
+            'input_size': 640
         }
-    )
-    
-    logging.info(f"ONNX model saved to {output_path}")
-
-
-def convert_to_tensorrt(onnx_path: str, output_path: str, precision: str = "fp16") -> None:
-    """Convert ONNX model to TensorRT format"""
-    try:
-        import tensorrt as trt
-        from tensorrt import runtime as trt_runtime
-    except ImportError:
-        raise ImportError("TensorRT is not installed. Please install TensorRT to use this feature.")
-    
-    logging.info(f"Converting ONNX model {onnx_path} to TensorRT format...")
-    
-    # Create TensorRT logger and builder
-    logger = trt.Logger(trt.Logger.WARNING)
-    builder = trt.Builder(logger)
-    config = builder.create_builder_config()
-    
-    # Set precision
-    if precision == "fp16":
-        config.set_flag(trt.BuilderFlag.FP16)
-    elif precision == "int8":
-        config.set_flag(trt.BuilderFlag.INT8)
-    
-    # Set workspace size
-    config.max_workspace_size = 1 << 30  # 1 GB
-    
-    # Create network
-    network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
-    parser = trt.OnnxParser(network, logger)
-    
-    # Parse ONNX model
-    with open(onnx_path, 'rb') as model_file:
-        if not parser.parse(model_file.read()):
-            for error in range(parser.num_errors):
-                logging.error(f"ONNX parser error: {parser.get_error(error)}")
-            raise RuntimeError("Failed to parse ONNX model")
-    
-    # Build engine
-    engine = builder.build_engine(network, config)
-    if engine is None:
-        raise RuntimeError("Failed to build TensorRT engine")
-    
-    # Save engine
-    with open(output_path, 'wb') as f:
-        f.write(engine.serialize())
-    
-    logging.info(f"TensorRT engine saved to {output_path}")
-
-
-def download_sample_data() -> None:
-    """Download sample data for testing"""
-    logging.info("Downloading sample data...")
-    try:
-        download_data()
-        logging.info("Sample data downloaded successfully")
+        
+        start_server(
+            model_path=model_path,
+            config=config,
+            host=host,
+            port=port
+        )
+        
     except Exception as e:
-        logging.error(f"Failed to download sample data: {e}")
+        logger.error(f"Ошибка при запуске сервера: {e}")
+        raise
 
-
-@hydra.main(version_base=None, config_path="configs", config_name="config")
-def serve(cfg: DictConfig, model_path: Optional[str] = None, host: str = "0.0.0.0", port: int = 8080) -> None:
-    """Start inference server"""
-    from barcode_detection.inference.server import start_server
+def setup_project():
+    """Настройка структуры проекта"""
     
-    logging.info("Starting inference server...")
+    logger.info("Настройка структуры проекта...")
     
-    # Set up environment
-    setup_project_environment(cfg)
+    # Создание необходимых директорий
+    directories = [
+        "data/train", "data/val", "data/test",
+        "outputs", "logs", "plots", "configs",
+        "barcode_detection/data",
+        "barcode_detection/models", 
+        "barcode_detection/training",
+        "barcode_detection/inference",
+        "barcode_detection/utils"
+    ]
     
-    # Use provided model path or default from config
-    if model_path is None:
-        model_path = cfg.inference.get('model_path', 'outputs/best.pt')
+    for directory in directories:
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        logger.info(f"Создана директория: {directory}")
     
-    # Start server
-    start_server(
-        model_path=model_path,
-        config=OmegaConf.to_container(cfg.inference, resolve=True),
-        host=host,
-        port=port
-    )
-
+    # Создание __init__.py файлов
+    init_files = [
+        "barcode_detection/__init__.py",
+        "barcode_detection/data/__init__.py",
+        "barcode_detection/models/__init__.py",
+        "barcode_detection/training/__init__.py", 
+        "barcode_detection/inference/__init__.py",
+        "barcode_detection/utils/__init__.py"
+    ]
+    
+    for init_file in init_files:
+        Path(init_file).touch()
+        logger.info(f"Создан файл: {init_file}")
+    
+    logger.info("Структура проекта настроена успешно!")
 
 class Commands:
-    """Main commands class for Fire CLI"""
+    """Основной класс команд для Fire CLI"""
     
-    def train(self, config_name: str = "config", **kwargs):
-        """Train the model"""
-        # Override config values with command line arguments
-        overrides = [f"{k}={v}" for k, v in kwargs.items()]
-        
-        with hydra.initialize(version_base=None, config_path="configs"):
-            cfg = hydra.compose(config_name=config_name, overrides=overrides)
-            train(cfg)
+    def train(self, **kwargs):
+        """Обучение модели"""
+        return train(**kwargs)
     
-    def infer(self, input_path: str, output_path: str, model_path: Optional[str] = None, config_name: str = "config"):
-        """Run inference"""
-        with hydra.initialize(version_base=None, config_path="configs"):
-            cfg = hydra.compose(config_name=config_name)
-            infer(cfg, input_path, output_path, model_path)
+    def infer(self, input_path: str, output_path: str, **kwargs):
+        """Инференс"""
+        return infer(input_path, output_path, **kwargs)
     
-    def evaluate(self, model_path: Optional[str] = None, data_split: str = "test", config_name: str = "config"):
-        """Evaluate model"""
-        with hydra.initialize(version_base=None, config_path="configs"):
-            cfg = hydra.compose(config_name=config_name)
-            evaluate(cfg, model_path, data_split)
+    def evaluate(self, **kwargs):
+        """Оценка модели"""
+        return evaluate(**kwargs)
     
-    def convert_onnx(self, model_path: str, output_path: str, input_size: int = 640):
-        """Convert model to ONNX"""
-        convert_to_onnx(model_path, output_path, input_size)
+    def serve(self, **kwargs):
+        """Запуск сервера"""
+        return serve(**kwargs)
     
-    def convert_tensorrt(self, onnx_path: str, output_path: str, precision: str = "fp16"):
-        """Convert ONNX to TensorRT"""
-        convert_to_tensorrt(onnx_path, output_path, precision)
-    
-    def serve(self, model_path: Optional[str] = None, host: str = "0.0.0.0", port: int = 8080, config_name: str = "config"):
-        """Start inference server"""
-        with hydra.initialize(version_base=None, config_path="configs"):
-            cfg = hydra.compose(config_name=config_name)
-            serve(cfg, model_path, host, port)
-    
-    def download_data(self):
-        """Download sample data"""
-        download_sample_data()
-    
-    def pull_data(self):
-        """Pull data using DVC"""
-        pull_dvc_data()
-
+    def setup(self):
+        """Настройка проекта"""
+        return setup_project()
 
 def main():
-    """Main entry point for Fire CLI"""
-    fire.Fire(Commands)
-
+    """Основная точка входа"""
+    try:
+        fire.Fire(Commands)
+    except Exception as e:
+        logger.error(f"Ошибка выполнения команды: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

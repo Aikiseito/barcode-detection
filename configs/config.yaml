@@ -1,92 +1,89 @@
-# Main Hydra configuration file for barcode detection project
+# Основная конфигурация для проекта детекции штрих-кодов
 
-# Hydra configuration
-defaults:
-  - _self_
-  - data: default.yaml
-  - model: yolov8.yaml
-  - training: default.yaml
-  - inference: default.yaml
-  - override hydra/job_logging: colorlog
-  - override hydra/hydra_logging: colorlog
-
-# Hydra directory configuration
-hydra:
-  run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.architecture}
-  sweep:
-    dir: outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.architecture}
-    subdir: ${hydra.job.override_dirname}
-  job:
-    chdir: True
-    config:
-      override_dirname:
-        exclude_keys:
-          - hydra
-          - model.path
-          - data.path
-          - mlflow
-          - wandb
-
-# Experiment tracking
-mlflow:
-  enabled: true
-  experiment_name: barcode_detection
-  tracking_uri: null  # Set to null to use local mlruns directory
-  log_model: true
-  registered_model_name: barcode_detector
-  tags:
-    model_type: ${model.architecture}
-    data_version: ${data.version}
-    user: ${oc.env:USER,unknown}
-
-# Weights & Biases integration
-wandb:
-  enabled: false
-  project: barcode_detection
-  entity: null  # Set to your W&B username or team name
-  tags:
-    - barcode
-    - yolo
-    - object_detection
-
-# Random seed for reproducibility
+# Общие настройки
+project_name: "barcode-detection"
 seed: 42
+device: "auto"  # auto, cpu, cuda
 
-# Environment settings
-env:
-  cuda_visible_devices: null  # Set to specific devices or null for all
-  num_workers: 4  # Number of workers for data loading
-  pin_memory: true  # Pin memory for data loading
+# Директории
+data_dir: "data"
+output_dir: "outputs"
+logs_dir: "logs"
+plots_dir: "plots"
 
-# Project paths (relative to the project root)
-paths:
-  data_dir: data
-  output_dir: outputs
-  log_dir: logs
-  model_dir: models
+# Конфигурация данных
+data:
+  data_dir: ${data_dir}
+  train_path: "train"
+  val_path: "val"
+  test_path: "test"
+  image_size: 640
+  image_extensions: [".jpg", ".jpeg", ".png"]
+  annotation_format: "json"  # json или yolo
+  
+  # Аугментации
+  augmentation:
+    enabled: true
+    horizontal_flip: 0.5
+    vertical_flip: 0.2
+    rotation: 15
+    brightness: 0.2
+    contrast: 0.2
 
-# Debugging mode (enables additional logging and visualizations)
-debug: false
+# Конфигурация модели
+model:
+  name: "yolov8n.pt"  # yolov8n, yolov8s, yolov8m, yolov8l, yolov8x
+  num_classes: 5  # qr, datamatrix, pdf417, ean13, other
+  pretrained: true
 
-# Platform-specific options
-platform:
-  accelerator: auto  # auto, cpu, gpu, tpu
-  precision: 32  # 32, 16, bf16
-  compile: false  # Enable torch.compile() for faster training
+# Конфигурация обучения
+training:
+  epochs: 50
+  batch_size: 16
+  learning_rate: 0.001
+  weight_decay: 0.0005
+  num_workers: 4
+  pin_memory: true
+  mixed_precision: true
+  
+  # Early stopping
+  early_stopping: true
+  patience: 10
+  
+  # Checkpoint
+  save_top_k: 3
+  monitor: "val_loss"
+  mode: "min"
+  save_last: true
 
-# Barcode detection specific settings
-barcode:
-  classes:
-    - EAN13
-    - CODE128
-    - QR
-    - DataMatrix
-    - PDF417
-    - UPC_A
-    - UPC_E
-    - EAN8
-    - ITF
-    - AZTEC
-  confidence_threshold: 0.25  # Default confidence threshold for predictions
-  iou_threshold: 0.45  # Default IoU threshold for NMS
+# Конфигурация инференса
+inference:
+  model_path: "${output_dir}/best.pt"
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+  max_detections: 100
+  input_size: 640
+  device: ${device}
+
+# MLflow конфигурация
+mlflow:
+  tracking_uri: "http://127.0.0.1:8080"
+  experiment_name: "barcode_detection"
+  autolog: true
+  log_models: true
+
+# Логирование
+logging:
+  level: "INFO"
+  log_file: null
+  log_dir: ${logs_dir}
+
+# Классы штрих-кодов
+classes:
+  names: ["qr", "datamatrix", "pdf417", "ean13", "other"]
+  colors: 
+    - [255, 0, 0]    # красный для QR
+    - [0, 255, 0]    # зеленый для DataMatrix
+    - [0, 0, 255]    # синий для PDF417
+    - [255, 255, 0]  # желтый для EAN13
+    - [255, 0, 255]  # пурпурный для other
