@@ -1,0 +1,28 @@
+data_dir: "data"
+train_dir: "${data_dir}/train"
+val_dir: "${data_dir}/val"
+test_dir: "${data_dir}/test"
+
+image_formats: [".jpg", ".jpeg", ".png", ".bmp"]
+annotation_formats: [".json", ".txt", ".xml"]
+
+batch_size: 16
+num_workers: 4
+pin_memory: true
+shuffle: true
+
+img_size: 640
+max_size: 1024
+
+augmentation:
+enabled: true
+brightness: 0.2
+contrast: 0.2
+saturation: 0.2
+hue: 0.1
+flip_probability: 0.5
+rotation_degrees: 10
+scale_range: [0.8, 1.2]
+
+classes: ["qr", "ean13", "ean8", "upc", "1d","dm", "az", "pdf", "id", "hd"]
+num_classes: 10
